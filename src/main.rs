@@ -1,4 +1,5 @@
-use std::process::Command;
+mod config;
+mod playerctl;
 
 use gtk4 as gtk;
 use gtk::prelude::*;
@@ -8,22 +9,30 @@ use gtk::{
     gio::MemoryInputStream,
 };
 
+use playerctl::*;
+
 enum GridRows {
+    Settings = -1,
     Title = 0,
     Artist = 1,
     Artwork = 2,
     Album = 3,
     Progress = 4,
     Controls = 6,
-    Players = 99
+    Players = 99,
+    Refresh = 100
 }
 
 fn main() -> glib::ExitCode {
+    config::create_config();
+
+    let players: Option<Vec<playerctl::Player>> = playerctl::check_players();
+
     let app = Application::builder()
         .application_id("com.ewan-selkirk.music-overlay")
         .build();
 
-    app.connect_activate(build_ui);
+    app.connect_activate(if players.is_some() {build_ui} else {build_ui_failed});
     app.run()
 }
 
@@ -32,6 +41,7 @@ fn build_ui(app: &Application) {
     window.set_title(Some("Music Overlay"));
     window.set_default_size(320, 600);
     window.set_resizable(false);
+    window.set_decorated(false);
 
     let grid = gtk::Grid::builder()
         .margin_start(6)
@@ -48,6 +58,12 @@ fn build_ui(app: &Application) {
         .build();
 
     window.set_child(Some(&grid));
+
+    let settings = gtk::Button::with_label("Settings");
+    settings.connect_clicked(glib::clone!(@weak app => move |_| {
+        build_settings_ui(&app);
+    }));
+    grid.attach(&settings, 3, GridRows::Settings as i32, 2, 1);
 
     let title = gtk::Label::new(Some(&call_playerctl("title", None)));
     title.set_css_classes(&vec!["title-2"]);
@@ -103,6 +119,10 @@ fn build_ui(app: &Application) {
         grid.attach(p, 3 * i as i32, GridRows::Players as i32, 5 / 2, 1);
     }
 
+    let refresh = gtk::Button::with_label("Refresh");
+    refresh.connect_clicked(|_| println!("Boop"));
+    grid.attach(&refresh, 0, GridRows::Refresh as i32, 5, 1);
+
 
     window.present();
 }
@@ -141,17 +161,24 @@ fn create_progress(current_progress: &str, end: &str) -> gtk::Grid {
     progress_grid
 }
 
-fn call_playerctl(arg: &str, extra: Option<&str>) -> String {
-    let form = match extra {
-        None => format!("{{{{ {arg} }}}}"),
-        Some(n) => format!("{{{{ {n}({arg}) }}}}")
-    };
+fn build_settings_ui(app: &Application) {
+    let window = ApplicationWindow::new(app);
 
-    let command = Command::new("playerctl")
-        .args(vec!["metadata", arg, "--format", &form])
-        .output()
-        .unwrap_or_else(|_| panic!("Failed to run playerctl command"))
-        .stdout;
+    window.present();
+}
 
-    String::from_utf8(command).expect("Failed to unwrap result from UTF-8")
+fn build_ui_failed(app: &Application) {
+    let window = ApplicationWindow::new(app);
+    window.set_title(Some("Music Overlay"));
+    window.set_default_size(320, 600);
+    window.set_resizable(false);
+    window.set_decorated(false);
+
+    let warn = gtk::Label::new(Some("No players could be found...\n:("));
+    warn.set_css_classes(&vec!["title-2"]);
+    warn.set_justify(gtk::Justification::Center);
+
+    window.set_child(Some(&warn));
+
+    window.present();
 }
